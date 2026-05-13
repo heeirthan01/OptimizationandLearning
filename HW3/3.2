@@ -1,0 +1,28 @@
+import cvxpy as cp
+
+n = 100
+m = 0.02
+k = 100
+g = 10
+eps = 1e-4
+
+qs = cp.Variable((n,2))
+cons = []
+cons.append(qs[-1,:] == [n-1,1])
+cons.append(qs[0,:] == [0,1])
+cons.append(qs[:,1]>=eps)
+
+def minobjective(qs,m,g,n,k):
+    obj = 0
+    for i in range(n):
+        obj+=m*g*qs[i,1]
+    for i in range(n-1):
+        obj += 0.5*k*cp.norm2(qs[i+1,:]-qs[i,:])**2
+
+    return cp.Minimize(obj)
+
+prob = cp.Problem(minobjective(qs,m,g,n,k), cons)
+prob.solve()
+print(f'Solver Status: ',prob.status)
+print(f'Optimal Value', prob.value)
+print(f'Optimal Equilibrium', qs.value)
