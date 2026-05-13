@@ -10,7 +10,7 @@ qs = cp.Variable((n,2))
 cons = []
 cons.append(qs[-1,:] == [n-1,1])
 cons.append(qs[0,:] == [0,1])
-cons.append(qs[:,1]>=eps)
+cons.append(qs[1:-1,1]>=eps)
 
 def minobjective(qs,m,g,n,k):
     obj = 0
@@ -26,3 +26,10 @@ prob.solve()
 print(f'Solver Status: ',prob.status)
 print(f'Optimal Value', prob.value)
 print(f'Optimal Equilibrium', qs.value)
+print(f'Dual Value No', len(cons[2].dual_value))
+
+#I think the dual values is a slack variable to make the inequalities equalities
+#After checking, these are actually variables that represent upward normal forces from the ground
+# Lagrangian =  Potential Energy - sum (lambda_i*q_i,2). At equlibrium, derviative in direction of mass position = 0 so lambda basically a counterforce
+#Also, complementary slackness says that (lambda_i*q_i,2) = 0 for each constraint. If q_i,2>0, lambda_i = 0 so no ground force
+# if lambda>0, q_i,2>0 must be 0. 
