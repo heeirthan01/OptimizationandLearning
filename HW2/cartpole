@@ -1,0 +1,135 @@
+import numpy as np
+import casadi as ca
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+from IPython.display import HTML
+
+# Problem data.
+m1 = 1 # cart mass
+m2 = 1 # pole mass
+g = 10 # gravity acceleration
+l = 1 # rod length
+h = .02 # discretization time step
+K = 150 # number of time steps
+u_max = 10 # maximum absolute value of control input
+q1_max = 1 # maximum absolute value of cart position
+
+# Initial and final state.
+x0 = ca.horzcat(0, np.pi, 0, 0)
+xK = ca.horzcat(0,0,0,0)
+
+# Cart-pole dynamics in state-space form.
+def f(x, u):
+    s = ca.sin(x[1])
+    c = ca.cos(x[1])
+    den = m1 + m2 * s ** 2
+    dq1 = x[2]
+    dq2 = x[3]
+    ddq1 = (m2 * s * (g * c - l * x[3] ** 2) + u) / den
+    ddq2 = ((m1 + m2) * g * s - m2 * l * c * s * x[3] ** 2 + c * u) / l / den
+    return ca.horzcat(dq1, dq2, ddq1, ddq2)
+
+x = ca.MX.sym('x',K,4)
+u = ca.MX.sym('u', K-1) 
+
+#Constraints
+constraints = []
+lbg = []
+ubg = []
+    #Constraints on states
+constraints.append(x[0,:].T - x0.T)
+lbg.extend([0]*4)
+ubg.extend([0]*4)
+constraints.append(x[-1,:].T - xK.T)
+lbg.extend([0]*4)
+ubg.extend([0]*4)
+constraints.append(x[:,0])
+lbg.extend([-q1_max]*K)
+ubg.extend([q1_max]*K)
+    #Constraints on controls
+constraints.append(u)
+lbg.extend([-u_max]*(K-1))
+ubg.extend([u_max]*(K-1))
+    #Constraints on system dynamics
+for k in range(K-1):
+    constraints.append(x[k+1,:].T - x[k,:].T - f(x[k,:],u[k]).T*h)
+    lbg.extend([0]*4)
+    ubg.extend([0]*4)
+
+#Objective
+def minobj(x,xref,u):
+    xref = ca.repmat(xK,K,1)
+    #obj = ca.sum((x-xref)**2)
+    obj = ca.sumsqr(x - xref) + ca.sumsqr(u)*0.01
+
+    return obj
+
+#Solve problem
+
+nlp = {
+    'x' : ca.vertcat(ca.vec(x),u),
+    'f' : minobj(x,xK,u),
+    'g' : ca.vertcat(*constraints)
+}
+solver = ca.nlpsol('solver', 'ipopt', nlp)
+x_guess = np.linspace(x0,xK,K)
+u_guess = np.zeros(K-1)
+init_guess = np.concatenate([x_guess.flatten(order='F'), u_guess])
+no_const = ca.vertcat(*constraints).numel()
+sol = solver(x0 = init_guess, lbg = lbg, ubg = ubg)
+print(solver.stats()['return_status'])
+
+sol_opt = sol['x'].full().flatten()
+x_opt = sol_opt[:K*4].reshape((K,4), order='F')
+u_opt = sol_opt[K*4:]
+
+
+# Plot solution
+# t = np.arange(K)
+# plt.plot(t,x_opt[:,0])
+# plt.plot(t, [q1_max] * (K), color='red')
+# plt.plot(t, [-q1_max] * (K), color='red')
+# plt.show()
+
+t = np.arange(K)
+plt.plot(t*h,(x_opt[:,1] % 2*np.pi)*(180/np.pi))
+plt.xlabel('Time')
+plt.ylabel('Angle (deg)')
+plt.show()
+
+#Plot controls
+t_u = np.arange(K-1)
+plt.plot(t_u*h,u_opt)
+plt.show()
+
+# Animate cart-pole motion.
+fig, ax = plt.subplots()
+ax.set_xlim(-3, 3)  # adjust animation width to your trajectory
+ax.set_ylim(- l - .2, l + .2)
+ax.set_aspect('equal')
+ax.grid()
+
+# Cart and pole represented as lines.
+cart_width = 0.3
+cart, = ax.plot([], [], lw=20)
+pole, = ax.plot([], [], marker='o', lw=2)
+def init():
+    cart.set_data([], [])
+    pole.set_data([], [])
+    return cart, pole
+
+# Animation update function.
+def update(frame):
+    q1 = x_opt[frame, 0]
+    q2 = x_opt[frame, 1]
+    cart_x = [q1 - cart_width / 2, q1 + cart_width / 2]
+    pole_x = [q1, q1 - l * np.sin(q2)]
+    pole_y = [0, l * np.cos(q2)]
+    cart.set_data(cart_x, [0, 0])
+    pole.set_data(pole_x, pole_y)
+    return cart, pole
+
+# Create animation.
+ani = FuncAnimation(fig, update, frames=K, init_func=init, blit=True)
+ani.save("cartpole.gif", writer="pillow", fps=20)
+plt.close(fig)
