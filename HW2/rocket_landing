@@ -1,0 +1,160 @@
+import numpy as np
+import casadi as ca
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+
+
+#-----------PARAMETERS------------------#
+m = 1 # mass
+I = 1 # moment of inertia
+g = 10 # gravitational acceleration
+r = 1 # thruster distance from center of mass
+h = 0.01 #discretization step
+K = 150 #number of timesteps
+no_x = 6
+no_u = 2
+
+
+#----------DYNAMICS--------------# 
+def f(x,u,m,g,r,I): #part a
+
+    q1d = x[3]
+    q2d = x[4]
+    q3d = x[5]
+    q1dd = (u[0]*ca.cos(x[2]) - u[1]*ca.sin(x[2]))/m
+    q2dd = u[0]*ca.sin(x[2]) + u[1]*ca.cos(x[2]) - m*g
+    q3dd = r*u[0]/I
+
+    return ca.horzcat(q1d, q2d, q3d, q1dd, q2dd, q3dd)
+
+#-------OPTIMIZATION VARIABLES-------------#
+x = ca.MX.sym('x', K,no_x)
+u = ca.MX.sym('u', K-1,no_u)
+
+#--------INIT AND FINAL STATES-------#
+x0 = ca.horzcat(1, 3, np.pi/8, 0, 0, 0)
+xK = ca.horzcat(0,r,0,0,0,0)
+
+#---------CONSTRAINTS----------------#
+constraints = []
+lbg = []
+ubg = []
+
+constraints.append(x[0,:].T - x0.T)
+ubg.extend([0]*no_x)
+lbg.extend([0]*no_x)
+
+constraints.append(x[-1,:].T - xK.T) #part b
+ubg.extend([0]*no_x)
+lbg.extend([0]*no_x)
+
+constraints.append(x[:,1] - r) #part d
+ubg.extend([ca.inf]*(K))
+lbg.extend([0]*(K))
+
+constraints.append(u[:,1] - ca.fabs(u[:,0])) #part c
+ubg.extend([ca.inf]*(K-1))
+lbg.extend([0]*(K-1))
+
+for k in range(K-1):
+    constraints.append(x[k+1,:].T - x[k,:].T - f(x[k,:],u[k,:],m,g,r,I).T*h)
+    ubg.extend([0]*no_x)
+    lbg.extend([0]*no_x)
+
+#------OBJECTIVE--------#
+def minObj(x,xk,u):
+    xref = ca.repmat(xk, K, 1)
+    obj =  0.01*ca.sumsqr(u)
+
+    return obj
+
+#--------SOLVE PROBLEM----------------#
+
+nlp = {
+    'x' : ca.vertcat(ca.vec(x),ca.vec(u)),
+    'f' : minObj(x,xK,u),
+    'g' : ca.vertcat(*constraints)
+}
+solver = ca.nlpsol('solver', 'ipopt', nlp)
+x_guess = np.linspace(x0,xK,K)
+u_guess = np.zeros((K-1,2))
+init_guess = np.concatenate([x_guess.flatten(order='F'), u_guess.flatten(order='F')])
+no_const = ca.vertcat(*constraints).numel()
+sol = solver(x0 = init_guess, lbg = lbg, ubg = ubg)
+print(solver.stats()['return_status'])
+
+print(sol['x'].shape)
+
+sol_opt = sol['x'].full().flatten()
+print(sol_opt.shape)
+#x_opt = sol_opt[:K*no_x].reshape((K,no_x), order='F')
+x_opt = sol_opt[:no_x*K]
+x_opt = x_opt.reshape(K,no_x, order='F')
+u_opt = sol_opt[no_x*K:]
+u_opt = u_opt.reshape(K-1, no_u, order='F')
+
+
+#------Plotting--------#
+#Plot commands
+t = np.arange(K-1)
+# print(u_opt.shape)
+plt.plot(t*h,u_opt[:,0], label='u1', color='b')
+plt.plot(t*h,u_opt[:,1], label='u2', color='k')
+plt.plot(t*h,np.abs(u_opt[:,0]), label='|u1|', color='r', linestyle='--')
+plt.xlabel('Time')
+plt.ylabel('Magnitude')
+plt.title('Commands over time')
+plt.legend()
+plt.savefig('commands.png')
+plt.close()
+
+#Check COM vertical constraint
+t_x = np.arange(K)
+plt.plot(t_x*h, x_opt[:,1], label='x2', color='b')
+plt.plot(t_x*h, [r]*K, label='r', color='r', linestyle='--')
+plt.xlabel('Time')
+plt.ylabel('Magnitude')
+plt.title('Vertical Position of COM vs r')
+plt.legend()
+plt.savefig('comconstraint.png')
+plt.close()
+
+#---------ANIMATION-----------#
+# Animate rocket motion.
+x0_np = np.array(x0).astype(float).flatten()
+fig, ax = plt.subplots()
+limits = np.array([
+    np.minimum(x0_np[:2], 0) - 2 * r,
+    np.maximum(x0_np[:2], 0) + 2 * r])
+ax.set_xlim(*limits[:, 0])  # adjust animation width to your trajectory
+ax.set_ylim(*limits[:, 1])
+ax.set_aspect('equal')
+ax.grid()
+
+# Rocket and thrust represented as lines.
+rocket, = ax.plot([], [], lw=10)
+thrust, = ax.plot([], [], color='red', lw=2)
+def init():
+    rocket.set_data([], [])
+    thrust.set_data([], [])
+    time_text.set_text('')
+    return rocket, thrust, time_text
+
+time_text = ax.text(0.02, 0.95, '', transform=ax.transAxes)
+# Animation update function.
+def update(frame):
+    q1, q2, q3 = x_opt[frame, :3]
+    u1, u2 = u_opt[frame] / 10
+    rocket_x = [q1 + r * np.sin(q3), q1 - r * np.sin(q3)]
+    rocket_y = [q2 - r * np.cos(q3), q2 + r * np.cos(q3)]
+    thrust_x = [q1 + r * np.sin(q3), q1 + (r + u2) * np.sin(q3) - u1 * np.cos(q3)]
+    thrust_y = [q2 - r * np.cos(q3), q2 - (r + u2) * np.cos(q3) - u1 * np.sin(q3)]
+    rocket.set_data(rocket_x, rocket_y)
+    thrust.set_data(thrust_x, thrust_y)
+    time_text.set_text(f't = {frame*h:.2f} s')
+    return rocket, thrust, time_text
+
+# Create animation.
+ani = FuncAnimation(fig, update, frames=K-1, init_func=init, blit=True)
+ani.save("rocketlanding.gif", writer="pillow", fps=10)
+plt.close(fig)
