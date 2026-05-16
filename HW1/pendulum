@@ -1,0 +1,74 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import random
+
+#--------PARAMS---------------#
+m = 1 # mass
+g = 10 # gravity
+l = .1 # length
+h = .0001 # discretization step
+T = 2 # time horizon
+tot_steps = int(T/h)
+#---------DYNAMICS-----------#
+def f(x,u):
+    x1d = x[1]
+    x2d = (m*g*l*np.sin(x[0]) + u)/(m*l**2)
+
+    return np.array([x1d, x2d])
+
+#---------CONTROL LAW---------#
+def control_law(x):
+    k_p = 50
+    k_d = 10
+    u = -m*g*l*np.sin(x[0]) - (m*l**2)*(x[1]*k_d + x[0]* k_p) #cancel nonlinear term and use PD controller
+    return u 
+
+def control_law_lp(x):
+    #Lyapunov based
+    k=7
+    u = -m*g*l*np.sin(x[0])- (m*l**2)*x[0] - (m*l**2)*k*x[1] 
+    return u
+
+#-----INITIAL CONDITION--------#
+def wrap_angle(angle):
+    return ((angle + np.pi) % (2 * np.pi)) - np.pi
+
+def rand_ic(): 
+    ub = np.pi / 8
+    lb = -ub 
+    r = random.uniform(lb,ub)
+    r = wrap_angle(r)
+    return np.array([r,0])
+
+#------LOOP--------#
+x0 = rand_ic()
+x_logging = np.zeros((tot_steps,2))
+x_target = np.array([0,0])
+x = x0 
+for i in range(0,tot_steps):
+    
+    x_logging[i,:] = x
+    if np.linalg.norm(x - x_target) < 0.001:
+        print(f'Target reached in {i*h} seconds')
+        break
+    
+    u = control_law(x)
+    x_new = x + f(x,u)*h
+    
+    x_new[0] = wrap_angle(x_new[0])
+    
+    x = x_new #update state
+
+print(f'Initial state was {x0}')
+print(f'Final state is {x}')
+print(f'Control law value is {u}')
+
+#--------PLOTTING-------#
+t = np.arange(tot_steps)
+plt.plot(t*h, x_logging[:,0], label = 'q1')
+plt.plot(t*h, x_logging[:,1], label = 'q1d')
+plt.title('States over time')
+plt.xlabel('Time (s)')
+plt.ylabel('Amplitude')
+plt.legend()
+plt.show()
