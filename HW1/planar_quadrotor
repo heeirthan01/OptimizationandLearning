@@ -1,0 +1,169 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+
+#----------Solve system of equations-------------#
+A1 = np.array([[1, 0, 0, 0, 0, 0, 0, 0],
+    [0, 1, 0, 0, 0, 0, 0, 0],
+    [0, 0, 2, 0, 0, 0, 0, 0],
+    [0, 0, 0, 6, 0, 0, 0, 0],
+    [1, 1, 1, 1, 1, 1, 1, 1],
+    [0, 1, 2, 3, 4, 5, 6, 7],
+    [0, 0, 2, 6, 12, 20, 30, 42],
+    [0, 0, 0, 6, 24, 60, 120, 210]])
+
+b1 = np.array([0,0,0,0,1,0,0,0])
+
+q1p = np.linalg.solve(A1,b1.T)
+print(f'Optimal parameters for q1 poly: {q1p}')
+
+A2 = np.array([[1, 0, 0, 0],
+               [0, 1, 0, 0],
+               [1, 1, 1, 1],
+               [0, 1, 2, 3]])
+
+b2 = np.array([0,0,1,0])
+
+q2p = np.linalg.solve(A2,b2.T)
+print(f'Optimal parameters for q2 poly: {q2p}')
+
+#--------PARAMETERS------------#
+m = 1 # mass
+g = 10 # gravity
+r = .2 # length
+I = .1 # moment of inertia
+T = 1 # time horizon
+h = .05 #step size
+tot_steps = int(T/h) # total steps
+no_states = 6
+no_inputs = 2
+
+#----------Derivative Helper------------#
+def derivative(f, t, n=1, h=1e-4):
+    #Compute n order derviative using finite difference, f is a time-dependent function
+    df = lambda t: (f(t+h) -  f(t)) / h
+    if n == 1:
+        return df(t)
+    else:
+        return derivative(df, t, n-1, h)
+
+#--------q1, q2, q3, u functions--------#
+def q1(t):
+    return q1p[0] + q1p[1]*t + q1p[2]*t**2 + q1p[3]*t**3 + q1p[4]*t**4 + q1p[5]*t**5 + q1p[6]*t**6 + q1p[7]*t**7
+
+def q2(t): 
+    return q2p[0] + q2p[1]*t + q2p[2]*t**2 + q2p[3]*t**3
+
+def q3(q1, q2, t): #Differential flatness (can compute states and input w/o integration)
+    return - np.arctan2(derivative(q1, t, n=2), (derivative(q2, t, n=2) + g))
+
+def u(q1, q2, q3, t):
+    q1ddot = derivative(q1, t, n=2)
+    q2ddot = derivative(q2, t, n=2)
+    q3ddot = derivative(q3, t, n=2)
+
+    u1 = (0.5*m * np.sqrt(q1ddot**2 + (q2ddot + g)**2)) - ((I/(2*r))*q3ddot)
+    u2 = (0.5*m * np.sqrt(q1ddot**2 + (q2ddot + g)**2)) + ((I/(2*r))*q3ddot)
+
+    return np.array([u1, u2])
+
+#-------INIT and FINAL states-------------#
+q0 = np.array([0,0,0,0,0,0])
+qF = np.array([1,1,0,0,0,0])
+
+#----------Dynamics------------#
+def f(x,u):
+    x1d = x[3]
+    x2d = x[4]
+    x3d = x[5]
+    x4d = (-np.sin(x[2])*(u[0]+u[1])/m)
+    x5d = (np.cos(x[2])*(u[0]+u[1])/m) - g
+    x6d = (r*(u[1]-u[0]))/I
+
+    return np.array([x1d, x2d, x3d, x4d, x5d, x6d])
+
+#----------Main Loop---------------#
+
+q = q0
+q1T = q1(T)
+q2T = q2(T)
+q3T = q3(q1,q2,T)
+
+actions = np.zeros((tot_steps-1, no_inputs))
+for i in range(tot_steps-1):
+    action = u(q1, q2, lambda t: q3(q1,q2, t), i*h)
+    actions[i,:] = action
+    print(f'Actions at time {i*h}: {action}')
+
+print(f'Final state at {q1T, q2T, q3T}')
+
+# #-----Plot Controls--------#
+
+# t = np.arange(tot_steps-1)*h
+# plt.plot(t, actions[:,0], label='u1')
+# plt.plot(t, actions[:,1], label='u2')
+# plt.title('Quadrotor commands over time')
+# plt.legend()
+# plt.show()
+
+#---------Plot Trajectory---------------#
+
+plt.figure()
+snapshots = 10
+times = np.linspace(0,T,snapshots)
+
+for t in times:
+    q1t = q1(t)
+    q2t = q2(t)
+    q3t = q3(q1,q2, t)
+
+    #Quadrotor body
+    c3t = np.cos(q3t)
+    s3t = np.sin(q3t)
+    endpoints = np.array([
+        [q1t - r * c3t, q2t - r * s3t],
+        [q1t + r * c3t, q2t + r * s3t]])
+    
+    plt.scatter(q1t,q2t, c='b')
+    plt.plot(*endpoints.T, c='b')
+
+plt.title('Planar quadrotor trajectory')
+plt.grid()
+plt.savefig('planar_quad.png')
+
+#-----Animation==========#
+fig, ax = plt.subplots()
+ax.set_xlim(-5, 5)  # adjust animation width to your trajectory
+ax.set_ylim(-5, 5)
+ax.set_aspect('equal')
+ax.grid()
+
+qr, = ax.plot([], [], lw=20)
+
+
+def init():
+    qr.set_data([], [])
+    return qr,
+
+def update(frame):
+    q1t = q1(frame)
+    q2t = q2(frame)
+    q3t = q3(q1,q2,frame)
+    c3t = np.cos(q3t)
+    s3t = np.sin(q3t)
+    endpoints = np.array([
+        [q1t - r * c3t, q2t - r * s3t], #(x,y) back
+        [q1t + r * c3t, q2t + r * s3t]]) #front
+    qr.set_data([endpoints[0,0], endpoints[1,0]],
+    [endpoints[0,1], endpoints[1,1]])
+    return qr,
+
+ani = FuncAnimation(fig, update, frames=tot_steps, init_func=init, blit=True)
+ani.save("planar_quad.gif", writer="pillow", fps=1)
+plt.close(fig)
+
+
+
+
+
+
